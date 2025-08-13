@@ -1,20 +1,330 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Financial Chatbot</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Financial Chatbot</title>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Three.js for 3D thinking animation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;          /* slate-900 */
+      --panel: #111827;       /* gray-900 */
+      --muted: #334155;       /* slate-700 */
+      --text: #e5e7eb;        /* gray-200 */
+      --brand: #22d3ee;       /* cyan-400 */
+      --brand-2: #60a5fa;     /* blue-400 */
+      --ok: #22c55e;          /* green-500 */
+      --err: #ef4444;         /* red-500 */
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 800px at 80% -10%, rgba(96,165,250,.08), transparent),
+                  radial-gradient(1000px 600px at 10% 110%, rgba(34,211,238,.06), transparent),
+                  var(--bg);
+      color: var(--text);
+      font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Inter, Helvetica, Arial, sans-serif;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      height: 100%;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      padding: 14px 18px;
+    }
+    .logo {
+      width: 36px; height: 36px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      box-shadow: 0 6px 16px rgba(34,211,238,.25);
+    }
+    header h1 { font-size: 1.05rem; font-weight: 650; margin: 0; }
+    header .meta { opacity:.75; font-size:.85rem }
+
+    .chat {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px 16px 24px;
+      overflow-y: auto;
+    }
+
+    .bubble {
+      max-width: 80%;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      box-shadow: 0 10px 20px rgba(0,0,0,.15);
+      animation: pop .18s ease-out;
+      word-wrap: break-word;
+    }
+    @keyframes pop{ from{ transform: scale(.97); opacity:.0 } to{ transform: scale(1); opacity:1 } }
+
+    .me { align-self: flex-end; background: #13233a; border-color:#1e3a5f }
+    .ai { align-self: flex-start; }
+
+    .chart-wrap {
+      width: min(520px, 82vw);
+    }
+    .thinking-wrap { width: 160px; height: 160px; }
+
+    .sys-note { font-size: .85rem; opacity:.75 }
+
+    .input {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 12px;
+      border-top: 1px solid #1f2937;
+      background: linear-gradient(180deg, rgba(255,255,255,.02), transparent 28%), var(--panel);
+    }
+    .input input[type="text"]{
+      width: 100%;
+      padding: 12px 12px;
+      border-radius: 12px;
+      border: 1px solid #334155;
+      outline: none;
+      background: #0b1220;
+      color: var(--text);
+    }
+    .input button{
+      border: 0;
+      border-radius: 12px;
+      padding: 0 16px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      color: #0c1222;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .04s ease;
+    }
+    .input button:active{ transform: translateY(1px) }
+
+    .hint { text-align:center; opacity:.7; font-size:.85rem; padding: 6px 0 10px }
+    .error { color: var(--err) }
+  </style>
 </head>
 <body>
-    <div class="chat-container">
-        <div id="chat-box" class="chat-box"></div>
-        <div class="input-area">
-            <input type="text" id="user-input" placeholder="Ask me something..." />
-            <button id="send-btn">Send</button>
-        </div>
-    </div>
-    <script src="script.js"></script>
+  <div class="app">
+    <header>
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <h1>Financial Chatbot</h1>
+        <div class="meta" id="sessionMeta">Session:</div>
+      </div>
+    </header>
+
+    <main id="chat" class="chat" aria-live="polite" aria-label="Chat transcript">
+      <div class="bubble ai sys-note">Ask things like: "How much did I spend last month?" • "Category-wise spend this year (chart)"</div>
+    </main>
+
+    <div class="hint">Charts render inline. Your data is scoped to your userId.</div>
+
+    <form class="input" id="chatForm">
+      <input id="message" type="text" placeholder="Ask me something… (Press Enter)" autocomplete="off" />
+      <button id="sendBtn" type="submit">Send</button>
+    </form>
+  </div>
+
+  <script>
+    // === CONFIG: replace with your n8n webhook URL ===
+    const N8N_WEBHOOK_URL = "https://YOUR_N8N_WEBHOOK_URL"; // e.g., https://n8n.example.com/webhook/xyz
+
+    // === Session handling ===
+    const metaEl = document.getElementById('sessionMeta');
+    let userId = localStorage.getItem('userId');
+    if (!userId) {
+      userId = 'user_' + Math.random().toString(36).slice(2) + '_' + Date.now();
+      localStorage.setItem('userId', userId);
+    }
+    metaEl.textContent = `Session: ${userId}`;
+
+    // === Chat utilities ===
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('chatForm');
+    const input = document.getElementById('message');
+    const sendBtn = document.getElementById('sendBtn');
+
+    /** Create a text bubble */
+    function addTextBubble(text, who = 'ai') {
+      const b = document.createElement('div');
+      b.className = `bubble ${who}`;
+      b.textContent = text; // safe text output
+      chat.appendChild(b);
+      chat.scrollTop = chat.scrollHeight;
+      return b;
+    }
+
+    /** Create a chart bubble using Chart.js; returns the chart instance */
+    function addChartBubble(chartType, labels, values, datasetLabel = 'Spending') {
+      const wrap = document.createElement('div');
+      wrap.className = 'bubble ai chart-wrap';
+      const canvas = document.createElement('canvas');
+      wrap.appendChild(canvas);
+      chat.appendChild(wrap);
+      chat.scrollTop = chat.scrollHeight;
+
+      const chart = new Chart(canvas.getContext('2d'), {
+        type: chartType,
+        data: {
+          labels: labels,
+          datasets: [{ label: datasetLabel, data: values }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: { legend: { labels: { color: '#e5e7eb' } } },
+          scales: {
+            x: { ticks: { color: '#cbd5e1' }, grid: { color: 'rgba(148,163,184,.2)' } },
+            y: { ticks: { color: '#cbd5e1' }, grid: { color: 'rgba(148,163,184,.2)' } }
+          }
+        }
+      });
+      return chart;
+    }
+
+    // === Three.js thinking animation ===
+    let thinkingRenderer = null;
+
+    function startThinking() {
+      // bubble wrapper
+      const wrap = document.createElement('div');
+      wrap.className = 'bubble ai thinking-wrap';
+      wrap.id = 'thinking-bubble';
+      chat.appendChild(wrap);
+      chat.scrollTop = chat.scrollHeight;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(160, 160);
+      wrap.appendChild(renderer.domElement);
+      thinkingRenderer = renderer;
+
+      // Geometry: wavy sphere
+      const geo = new THREE.SphereGeometry(1.6, 48, 48);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x22d3ee, roughness: 0.25, metalness: 0.65, emissive: 0x09243a, emissiveIntensity: 0.4 });
+      const sphere = new THREE.Mesh(geo, mat);
+      scene.add(sphere);
+
+      const light1 = new THREE.PointLight(0x60a5fa, 1.1, 50); light1.position.set(4, 4, 6); scene.add(light1);
+      const light2 = new THREE.PointLight(0xffffff, 0.6, 50); light2.position.set(-3, -2, 4); scene.add(light2);
+
+      camera.position.z = 4.2;
+
+      // Subtle wave by scaling geometry vertices each frame
+      const pos = geo.attributes.position;
+      const base = pos.array.slice();
+      let t = 0;
+      function animate(){
+        t += 0.01;
+        for (let i = 0; i < pos.count; i++) {
+          const ix = i*3;
+          const x = base[ix], y = base[ix+1], z = base[ix+2];
+          const r = Math.sqrt(x*x + y*y + z*z);
+          const k = 0.06 * Math.sin(3*r + t*3);
+          pos.array[ix]   = x * (1 + k);
+          pos.array[ix+1] = y * (1 + k);
+          pos.array[ix+2] = z * (1 + k);
+        }
+        pos.needsUpdate = true;
+        sphere.rotation.y += 0.012;
+        sphere.rotation.x += 0.006;
+        renderer.render(scene, camera);
+        renderer.setAnimationLoop(animate);
+      }
+      animate();
+    }
+
+    function stopThinking() {
+      const wrap = document.getElementById('thinking-bubble');
+      if (wrap) {
+        // dispose three.js renderer
+        if (thinkingRenderer) {
+          thinkingRenderer.setAnimationLoop(null);
+          thinkingRenderer.dispose();
+          thinkingRenderer = null;
+        }
+        wrap.remove();
+      }
+    }
+
+    // === Networking ===
+    async function askBot(message) {
+      // UI state
+      input.disabled = true; sendBtn.disabled = true;
+      startThinking();
+
+      try {
+        const res = await fetch(N8N_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, message })
+        });
+
+        // Remove loader early; keep UI snappy
+        stopThinking();
+        input.disabled = false; sendBtn.disabled = false; input.focus();
+
+        if (!res.ok) {
+          addTextBubble(`Server error (${res.status}). Please try again.`, 'ai');
+          return;
+        }
+        const data = await res.json();
+
+        // Normalized handling of types from n8n
+        switch (data.type) {
+          case 'text':
+            addTextBubble(String(data.message ?? ''), 'ai');
+            break;
+          case 'chart':
+            addChartBubble(String(data.chartType || 'bar'), data.labels || [], data.values || []);
+            if (data.message) addTextBubble(String(data.message), 'ai');
+            break;
+          case 'mixed':
+            if (data.message) addTextBubble(String(data.message), 'ai');
+            addChartBubble(String(data.chartType || 'bar'), data.labels || [], data.values || []);
+            break;
+          default:
+            addTextBubble('I could not understand the response format.', 'ai');
+        }
+      } catch (err) {
+        stopThinking();
+        input.disabled = false; sendBtn.disabled = false; input.focus();
+        addTextBubble('Network error. Check your webhook URL or connection.', 'ai');
+        console.error(err);
+      }
+    }
+
+    // === Form handling ===
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const msg = input.value.trim();
+      if (!msg) return;
+      addTextBubble(msg, 'me');
+      input.value = '';
+      askBot(msg);
+    });
+
+    // Optional: send on Ctrl/Cmd+Enter even when multiline inputs are used later
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
 </body>
 </html>
